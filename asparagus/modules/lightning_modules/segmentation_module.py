@@ -98,6 +98,11 @@ class SegmentationModule(BaseModule):
     @staticmethod
     def _pad_image_for_sliding_window_inference(x, patch_size):
         spatial_shape = tuple(x.shape[2:])
+        logging.debug(
+            "Segmentation inference input shape before padding: %s; inference_patch_size: %s",
+            tuple(x.shape),
+            tuple(patch_size),
+        )
         if len(spatial_shape) != len(patch_size):
             raise ValueError(
                 f"Image spatial shape {spatial_shape} is incompatible with inference patch size {patch_size}."
@@ -111,6 +116,10 @@ class SegmentationModule(BaseModule):
             pad_widths.append((pad_before, pad_after))
 
         if not any(before or after for before, after in pad_widths):
+            logging.debug(
+                "Segmentation inference padding skipped; image shape remains: %s",
+                tuple(x.shape),
+            )
             return x, spatial_shape, pad_widths
 
         # This is temporary inference padding only. Do not write it into
@@ -118,22 +127,43 @@ class SegmentationModule(BaseModule):
         pad_args = []
         for pad_before, pad_after in reversed(pad_widths):
             pad_args.extend([pad_before, pad_after])
-        return F.pad(x, pad_args, mode="constant", value=float(x.min())), spatial_shape, pad_widths
+        padded = F.pad(x, pad_args, mode="constant", value=float(x.min()))
+        logging.debug(
+            "Segmentation inference image shape after padding: %s; pad_widths: %s",
+            tuple(padded.shape),
+            pad_widths,
+        )
+        return padded, spatial_shape, pad_widths
 
     @staticmethod
     def _crop_logits_to_spatial_shape(logits, spatial_shape, pad_widths):
         if not any(before or after for before, after in pad_widths):
+            logging.debug(
+                "Segmentation inference logits cropping skipped; logits shape remains: %s",
+                tuple(logits.shape),
+            )
             return logits
 
         slices = [slice(None), slice(None)]
         for dim_size, (pad_before, _) in zip(spatial_shape, pad_widths):
             slices.append(slice(pad_before, pad_before + dim_size))
-        return logits[tuple(slices)]
+        cropped = logits[tuple(slices)]
+        logging.debug(
+            "Segmentation inference logits shape after cropping: %s; target spatial shape: %s",
+            tuple(cropped.shape),
+            spatial_shape,
+        )
+        return cropped
 
     def _sliding_window_predict_with_inference_padding(self, x):
         x, spatial_shape, pad_widths = self._pad_image_for_sliding_window_inference(
             x=x,
             patch_size=self.inference_patch_size,
+        )
+        logging.debug(
+            "Segmentation sliding-window input shape: %s; patch_size: %s",
+            tuple(x.shape),
+            tuple(self.inference_patch_size),
         )
         logits = self.model.sliding_window_predict(
             data=x,
@@ -144,6 +174,7 @@ class SegmentationModule(BaseModule):
             patch_size=self.inference_patch_size,
             overlap=0.5,
         )
+        logging.debug("Segmentation sliding-window logits shape before cropping: %s", tuple(logits.shape))
 
         # Crop away transient inference padding before reverse_preprocessing;
         # reverse_preprocessing expects logits in the asp_process tensor shape.
@@ -284,8 +315,11 @@ class SegmentationModule(BaseModule):
         # the configured patch size remains valid.
         logits = self._sliding_window_predict_with_inference_padding(x)
 
+        logging.debug("Segmentation test logits shape before reverse_preprocessing: %s", tuple(logits.shape))
         src_logits = reverse_preprocessing(logits, batch["properties"])
+        logging.debug("Segmentation test logits shape after reverse_preprocessing: %s", tuple(src_logits.shape))
         src_label = batch["src_label"]
+        logging.debug("Segmentation test source label shape: %s", tuple(src_label.shape))
         self.results[batch["file_path"]] = self.compute_metrics_from_confusion_matrix(src_logits, src_label)
 
     def on_test_epoch_end(self):
@@ -315,10 +349,12 @@ class SegmentationModule(BaseModule):
         # Do not run directly on shallow volumes; pad for inference, then crop logits
         # back before reverse_preprocessing.
         logits = self._sliding_window_predict_with_inference_padding(x)
+        logging.debug("Segmentation predict logits shape before reverse_preprocessing: %s", tuple(logits.shape))
         logits = reverse_preprocessing(
             array=logits,
             image_properties=batch["properties"],
         )
+        logging.debug("Segmentation predict logits shape after reverse_preprocessing: %s", tuple(logits.shape))
         batch["logits"] = logits
         return batch
 
