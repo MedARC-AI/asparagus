@@ -280,7 +280,8 @@ class SegmentationModule(BaseModule):
         #     patch_size=fit_patch_size_to_image_size(self.inference_patch_size, list(x.shape[2:])),
         #     overlap=0.5,
         # )
-        # Replaced with a version that correctly patches
+        # Do not shrink the inference window here; shallow volumes are padded first so
+        # the configured patch size remains valid.
         logits = self._sliding_window_predict_with_inference_padding(x)
 
         src_logits = reverse_preprocessing(logits, batch["properties"])
@@ -311,7 +312,8 @@ class SegmentationModule(BaseModule):
         #     patch_size=self.inference_patch_size,
         #     overlap=0.5,
         # )
-        # Replaced with a version that correctly patches
+        # Do not run directly on shallow volumes; pad for inference, then crop logits
+        # back before reverse_preprocessing.
         logits = self._sliding_window_predict_with_inference_padding(x)
         logits = reverse_preprocessing(
             array=logits,
