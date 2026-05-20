@@ -187,6 +187,7 @@ def CPU_seg_test_transforms(normalize=True):
             Torch_Normalize(
                 normalize=normalize
             ),  # Torch_Pad(patch_size=min_patch_size) # TODO: This does not work with reverse preprocessing...
+            # Update 20260520: added transient inference padding inside SegmentationModule so Torch_Pad is not needed here.
         ]
     )
 

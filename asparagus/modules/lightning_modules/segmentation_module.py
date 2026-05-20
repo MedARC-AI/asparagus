@@ -3,6 +3,7 @@ import numpy as np
 import os
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torchmetrics.functional
 import wandb
 from asparagus.functional.metrics.utils import format_multilabel_metrics
@@ -93,6 +94,60 @@ class SegmentationModule(BaseModule):
 
         if self.deep_supervision:
             self.train_loss = DeepSupervisionLoss(loss=self.train_loss, weights=None)
+
+    @staticmethod
+    def _pad_image_for_sliding_window_inference(x, patch_size):
+        spatial_shape = tuple(x.shape[2:])
+        if len(spatial_shape) != len(patch_size):
+            raise ValueError(
+                f"Image spatial shape {spatial_shape} is incompatible with inference patch size {patch_size}."
+            )
+
+        pad_widths = []
+        for dim_size, min_size in zip(spatial_shape, patch_size):
+            pad_total = max(0, int(min_size) - int(dim_size))
+            pad_before = pad_total // 2
+            pad_after = pad_total - pad_before
+            pad_widths.append((pad_before, pad_after))
+
+        if not any(before or after for before, after in pad_widths):
+            return x, spatial_shape, pad_widths
+
+        # This is temporary inference padding only. Do not write it into
+        # properties["pad_box"], which describes offline asp_process padding.
+        pad_args = []
+        for pad_before, pad_after in reversed(pad_widths):
+            pad_args.extend([pad_before, pad_after])
+        return F.pad(x, pad_args, mode="constant", value=float(x.min())), spatial_shape, pad_widths
+
+    @staticmethod
+    def _crop_logits_to_spatial_shape(logits, spatial_shape, pad_widths):
+        if not any(before or after for before, after in pad_widths):
+            return logits
+
+        slices = [slice(None), slice(None)]
+        for dim_size, (pad_before, _) in zip(spatial_shape, pad_widths):
+            slices.append(slice(pad_before, pad_before + dim_size))
+        return logits[tuple(slices)]
+
+    def _sliding_window_predict_with_inference_padding(self, x):
+        x, spatial_shape, pad_widths = self._pad_image_for_sliding_window_inference(
+            x=x,
+            patch_size=self.inference_patch_size,
+        )
+        logits = self.model.sliding_window_predict(
+            data=x,
+            # The old fitted patch size can become [64, 64, 0] for shallow
+            # Task 2 volumes such as [512, 512, 21], so we pad the image and
+            # keep the configured inference window instead.
+            # patch_size=fit_patch_size_to_image_size(self.inference_patch_size, list(x.shape[2:])),
+            patch_size=self.inference_patch_size,
+            overlap=0.5,
+        )
+
+        # Crop away transient inference padding before reverse_preprocessing;
+        # reverse_preprocessing expects logits in the asp_process tensor shape.
+        return self._crop_logits_to_spatial_shape(logits, spatial_shape, pad_widths)
 
     def configure_metrics(self, prefix: str):
         return MetricCollection(
@@ -219,11 +274,7 @@ class SegmentationModule(BaseModule):
     def test_step(self, batch, batch_idx):
         x = batch["image"]
 
-        logits = self.model.sliding_window_predict(
-            data=x,
-            patch_size=fit_patch_size_to_image_size(self.inference_patch_size, list(x.shape[2:])),
-            overlap=0.5,
-        )
+        logits = self._sliding_window_predict_with_inference_padding(x)
 
         src_logits = reverse_preprocessing(logits, batch["properties"])
         src_label = batch["src_label"]
@@ -247,11 +298,7 @@ class SegmentationModule(BaseModule):
 
     def predict_step(self, batch, batch_idx):
         x = batch["image"]
-        logits = self.model.sliding_window_predict(
-            data=x,
-            patch_size=self.inference_patch_size,
-            overlap=0.5,
-        )
+        logits = self._sliding_window_predict_with_inference_padding(x)
         logits = reverse_preprocessing(
             array=logits,
             image_properties=batch["properties"],
