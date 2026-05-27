@@ -1,3 +1,4 @@
+import nibabel as nib
 import torch
 import torchvision
 from asparagus.paths import get_data_path, get_source_labels_path
@@ -116,7 +117,11 @@ class SegTestDataset(Dataset):
     def _get_src_label(self, file, properties):
         # source label is the label from the original dataset without any preprocessing
         src_label_path = file.replace(get_data_path(), get_source_labels_path()).replace(".pt", "_label.nii.gz")
-        src_label_nii = read_file_to_nifti_or_np(src_label_path)
+        # read_file_to_nifti_or_np treats dotted path components like file extensions, e.g. /path/name.surname/...
+        if src_label_path.endswith((".nii", ".nii.gz")):
+            src_label_nii = nib.load(src_label_path)
+        else:
+            src_label_nii = read_file_to_nifti_or_np(src_label_path)
         src_label_nii = reorient_nib_image(
             src_label_nii,
             original_orientation=properties["original_orientation"],
