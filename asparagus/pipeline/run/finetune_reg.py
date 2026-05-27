@@ -38,6 +38,7 @@ Plugins.instance().register(FinetuneSearchpathPlugin)
 )
 def main(cfg: DictConfig) -> None:
     print(f"{OmegaConf.to_yaml(cfg)}\n Version: {cfg.run_id}\n Run dir: {HydraConfig.get().run.dir}\n")
+    logging_safe_cfg = OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
     file_store, path_store, version_store = prepare_standard_experiment(cfg)
     weights = resolve_checkpoint(cfg)
 
@@ -49,6 +50,7 @@ def main(cfg: DictConfig) -> None:
         log_file_name=HydraConfig.get().job.name,
         run_dir=path_store.run_dir,
         version=version_store.version,
+        wandb_config=logging_safe_cfg,
         wandb_experiment=HydraConfig.get().job.config_name,
         wandb_entity=cfg.logger.wandb_entity,
         wandb_project="Finetune",
