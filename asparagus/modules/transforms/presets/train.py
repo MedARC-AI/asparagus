@@ -86,6 +86,20 @@ def CPU_clsreg_train_transforms_crop(target_size, normalize=True):
         ]
     )
 
+def CPU_clsreg_train_transforms_crop_CUSTOM(target_size, normalize=True):
+    if len(target_size) == 2:
+        axes = (0, 1)
+    else:
+        axes = (0, 1, 2)
+    return transforms.Compose(
+        [
+            Torch_Normalize(normalize=normalize),
+            Torch_Pad(patch_size=target_size),
+            Torch_CenterCrop(target_size=target_size),
+            # Here we remove the real augmentions
+        ]
+    )
+
 
 def CPU_CT_C0_clsreg_train_transforms_crop(target_size, normalize=True):
     if len(target_size) == 2:
